@@ -52,6 +52,40 @@
         #pin-btn:disabled { opacity: 0.5; }
         #pin-error { color: #e74c3c; margin-top: 12px; font-size: 14px; min-height: 20px; }
 
+        /* --- Отладочная панель --- */
+        #debug-info {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #1e1e1e;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            padding: 8px;
+            max-height: 40vh;
+            overflow-y: auto;
+            z-index: 200;
+            border-top: 2px solid #ffcc00;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        #debug-info .label { color: #ffcc00; font-weight: bold; }
+        #debug-toggle {
+            position: fixed;
+            bottom: 8px;
+            right: 8px;
+            background: #ffcc00;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 201;
+        }
+
         /* --- Основной чат --- */
         #chat-screen { display: none; flex-direction: column; height: 100vh; }
         #chat-screen.active { display: flex; }
@@ -130,16 +164,60 @@
         </div>
     </div>
 
+    <!-- Отладочная панель -->
+    <div id="debug-info"></div>
+    <button id="debug-toggle" onclick="toggleDebug()">DBG</button>
+
     <script>
+        // ========== ОТЛАДОЧНАЯ ПАНЕЛЬ ==========
+        let debugVisible = true;
+        function logDebug(label, value) {
+            const el = document.getElementById("debug-info");
+            if (!el) return;
+            const text = typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+            el.innerHTML += `<span class="label">${label}:</span>\n${text}\n\n`;
+            el.scrollTop = el.scrollHeight;
+        }
+        function toggleDebug() {
+            debugVisible = !debugVisible;
+            document.getElementById("debug-info").style.display = debugVisible ? "block" : "none";
+        }
+
+        // ========== ИНИЦИАЛИЗАЦИЯ ==========
         const webApp = window.WebApp;
         let initData = "";
+
+        logDebug("window.WebApp существует?", webApp ? "ДА" : "НЕТ");
 
         if (webApp) {
             webApp.ready();
             initData = webApp.initData || "";
+            logDebug("initData (из webApp.initData)", initData);
+            logDebug("initData длина", initData.length);
+            logDebug("initDataUnsafe", webApp.initDataUnsafe || {});
+            logDebug("Ключи webApp", Object.keys(webApp));
+            logDebug("Ключи initDataUnsafe", Object.keys(webApp.initDataUnsafe || {}));
+
+            // Проверяем, есть ли в initData поле hash
+            const hashMatch = initData.match(/hash=([^&]+)/);
+            logDebug("hash из initData", hashMatch ? hashMatch[1] : "НЕ НАЙДЕН");
+
+            // Проверяем URL-фрагмент (после #)
+            logDebug("URL полностью", window.location.href);
+            logDebug("URL hash (после #)", window.location.hash);
+            logDebug("URL search (после ?)", window.location.search);
+
+            // Проверяем, есть ли в URL параметр WebAppData
+            const hashParams = new URLSearchParams(window.location.hash.slice(1));
+            const webAppData = hashParams.get("WebAppData");
+            logDebug("WebAppData из URL", webAppData || "НЕ НАЙДЕН");
+            if (webAppData) {
+                logDebug("WebAppData длина", webAppData.length);
+            }
         } else {
             console.warn("MAX Bridge не найден. Режим отладки.");
             initData = "debug_mode";
+            logDebug("Режим отладки", "initData = debug_mode");
         }
 
         const myUser = webApp?.initDataUnsafe?.user || { id: "debug", first_name: "Я" };
@@ -147,12 +225,14 @@
 
         const API_BASE = "https://tressubluna.ru";
 
-        // === Проверка PIN ===
+        // ========== ПРОВЕРКА PIN ==========
         async function checkPin() {
             const pin = document.getElementById("pin-input").value.trim();
             const errEl = document.getElementById("pin-error");
             const btn = document.getElementById("pin-btn");
             errEl.textContent = "";
+
+            logDebug("Проверка PIN", pin);
 
             if (!pin) {
                 errEl.textContent = "Введите PIN-код";
@@ -161,6 +241,9 @@
 
             btn.disabled = true;
             try {
+                logDebug("Отправка на сервер", `${API_BASE}/verify_pin`);
+                logDebug("Заголовок x-max-init-data (первые 100)", initData.slice(0, 100));
+
                 const res = await fetch(`${API_BASE}/verify_pin`, {
                     method: "POST",
                     headers: {
@@ -169,18 +252,21 @@
                     },
                     body: JSON.stringify({ pin })
                 });
+                logDebug("Ответ сервера", `HTTP ${res.status}`);
                 if (!res.ok) {
                     errEl.textContent = "Неверный PIN-код";
+                    const text = await res.text();
+                    logDebug("Тело ответа", text);
                     return;
                 }
-                // Успех — показываем чат
+                logDebug("PIN верный", "открываем чат");
                 document.getElementById("pin-screen").style.display = "none";
                 document.getElementById("chat-screen").classList.add("active");
                 loadMessages();
                 setInterval(loadMessages, 5000);
             } catch (e) {
                 errEl.textContent = "Ошибка соединения";
-                console.error(e);
+                logDebug("Ошибка fetch", e.message);
             } finally {
                 btn.disabled = false;
             }
@@ -191,7 +277,7 @@
             if (e.key === "Enter") checkPin();
         });
 
-        // === Работа с чатом ===
+        // ========== ЧАТ ==========
         async function loadMessages() {
             try {
                 const res = await fetch(`${API_BASE}/messages`, {
